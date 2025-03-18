@@ -1,0 +1,9 @@
+# Python标准库依赖
+# tkinter已包含在Python标准库中，无需额外安装 
+Pillow==10.2.0
+pystray==0.19.5
+keyboard==0.13.5
+watchdog==4.0.0
+pymongo==4.6.1
+python-dotenv==1.0.0
+dnspython==2.6.1 

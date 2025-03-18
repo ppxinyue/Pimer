@@ -1,0 +1,13 @@
+{
+    "theme": "dark",
+    "opacity": 0.8290697674418603,
+    "daily_goal": 32400,
+    "auto_start": true,
+    "show_seconds": true,
+    "always_on_top": false,
+    "hotkeys": {
+        "toggle_timer": "ctrl+shift+space",
+        "show_hide": "ctrl+shift+h"
+    },
+    "timer_mode": "up"
+}
