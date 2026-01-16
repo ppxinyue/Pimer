@@ -2,7 +2,7 @@ Pimer, your timer to dreamer!
 
 小猪祝你梦想成真！
 
-Pimer = Phd + timer = Pig has dreams +timer = pp +timer
+Pimer = Phd + timer = Pig has dreams +timer
 
 下载地址：https://ppxinyue.github.io/Pimer/
 
