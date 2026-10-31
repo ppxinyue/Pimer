@@ -12,6 +12,7 @@ import calendar
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import pystray
 import threading
+import queue
 import keyboard
 from pathlib import Path
 import shutil
@@ -152,6 +153,11 @@ class WorkTimer:
         
         # 立即隐藏主窗口，防止出现半透明白色窗口
         self.root.withdraw()
+
+        # 托盘和热键线程只投递操作，由 Tk 事件循环执行。
+        self._ui_queue = queue.SimpleQueue()
+        self._closing = False
+        self._process_ui_queue()
         
         # 设置窗口样式
         self.root.attributes('-topmost', self.settings.get('always_on_top'))
@@ -230,7 +236,7 @@ class WorkTimer:
                     self.loading_window.destroy()
                 
                 # 显示主窗口
-                self.root.deiconify()
+                self._post_ui(self.show_window)
                 
                 # 开始更新计时器
                 self.update_timer()
@@ -707,7 +713,6 @@ class WorkTimer:
         
     def minimize_window(self):
         self.root.withdraw()
-        self.window_visible = False
         
     def toggle_timer(self):
         if self.is_running:
@@ -1225,9 +1230,6 @@ class WorkTimer:
         self.root.bind("<ButtonRelease-1>", self.stop_move)
         self.root.bind("<B1-Motion>", self.on_move)
         
-        # 窗口可见性
-        self.window_visible = True
-        
         # 初始化时立即更新进度条
         self.update_progress()
 
@@ -1238,17 +1240,36 @@ class WorkTimer:
         self.today = datetime.now().date()
         self.is_dragging = False
         self.resize_edge = None
-        self.window_visible = True
+
+    def _post_ui(self, callback):
+        if not self._closing:
+            self._ui_queue.put(callback)
+
+    def _process_ui_queue(self):
+        while not self._closing:
+            try:
+                callback = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                callback()
+            except Exception:
+                self.root.report_callback_exception(*sys.exc_info())
+        if not self._closing:
+            self.root.after(50, self._process_ui_queue)
         
     def setup_tray(self):
         # 创建系统托盘图标
         image = Image.new('RGB', (64, 64), color='#1e1e2e')
+        ready = lambda item: (self.user_manager.is_logged_in() and
+                              getattr(self, 'loading_completed', False))
         menu = pystray.Menu(
-            pystray.MenuItem("显示/隐藏", self.toggle_window),
-            pystray.MenuItem("开始/暂停", self.toggle_timer),
-            pystray.MenuItem("统计", self.show_statistics),
-            pystray.MenuItem("设置", self.show_settings),
-            pystray.MenuItem("退出", self.quit_app)
+            pystray.MenuItem("显示 Pimer", lambda: self._post_ui(self.show_window), default=True),
+            pystray.MenuItem("隐藏", lambda: self._post_ui(self.minimize_window), enabled=ready),
+            pystray.MenuItem("开始/暂停", lambda: self._post_ui(self.toggle_timer), enabled=ready),
+            pystray.MenuItem("统计", lambda: self._post_ui(self.show_statistics), enabled=ready),
+            pystray.MenuItem("设置", lambda: self._post_ui(self.show_settings), enabled=ready),
+            pystray.MenuItem("退出", lambda: self._post_ui(self.quit_app))
         )
         self.tray_icon = pystray.Icon(
             "Pimer",
@@ -1268,11 +1289,11 @@ class WorkTimer:
     def _setup_hotkeys(self):
         keyboard.add_hotkey(
             self.settings.get('hotkeys')['toggle_timer'],
-            self.toggle_timer
+            lambda: self._post_ui(self.toggle_timer)
         )
         keyboard.add_hotkey(
             self.settings.get('hotkeys')['show_hide'],
-            self.toggle_window
+            lambda: self._post_ui(self.toggle_window)
         )
         
     def show_statistics(self):
@@ -1714,12 +1735,26 @@ class WorkTimer:
         # 重新设置UI
         self.setup_ui()
 
+    def show_window(self):
+        window = self.root
+        if not (self.user_manager.is_logged_in() and
+                getattr(self, 'loading_completed', False)):
+            # 登录或加载期间唤起现有对话框，避免露出空窗口或旧用户界面。
+            window = next((child for child in reversed(self.root.winfo_children())
+                           if isinstance(child, tk.Toplevel)), None)
+            if window is None:
+                return
+        window.deiconify()
+        window.lift()
+        window.focus_force()
+
     def toggle_window(self):
-        if self.window_visible:
-            self.root.withdraw()
+        focused = self.root.focus_displayof()
+        if (self.root.state() == 'normal' and focused is not None and
+                focused.winfo_toplevel() == self.root):
+            self.minimize_window()
         else:
-            self.root.deiconify()
-        self.window_visible = not self.window_visible
+            self.show_window()
         
     def get_period_stats(self, start_date, end_date):
         total_seconds = 0
@@ -1828,6 +1863,9 @@ class WorkTimer:
 
     def quit_app(self):
         """退出应用"""
+        if self._closing:
+            return
+        self._closing = True
         try:
             # 保存当前状态
             if hasattr(self, 'is_running') and self.is_running:
@@ -2051,6 +2089,7 @@ class WorkTimer:
 
     def on_closing(self):
         """关闭程序时的处理"""
+        self._closing = True
         self.save_data()  # 保存并同步数据
         if hasattr(self, 'cloud_sync'):
             self.cloud_sync.close()  # 关闭MongoDB连接
@@ -2582,4 +2621,4 @@ if __name__ == "__main__":
         app.run()
     except Exception as e:
         print(f"程序运行出错: {e}")
-        sys.exit(1) 
+        sys.exit(1)
